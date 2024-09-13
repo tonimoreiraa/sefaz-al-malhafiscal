@@ -1,0 +1,47 @@
+{
+    "title": "PuppeteerCrawler Template",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+      "companies": {
+        "title": "Empresas",
+        "type": "array",
+        "description": "List of companies with their CNPJ and Login",
+        "editor": "keyValue",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "Nome",
+              "type": "string",
+              "description": "The name of the company"
+            },
+            "login": {
+              "title": "Login",
+              "type": "string",
+              "description": "Login"
+            },
+            "password": {
+              "title": "Senha",
+              "type": "string",
+              "description": "Password"
+            }
+          },
+          "required": ["name", "login", "password"]
+        }
+      },
+      "years": {
+        "title": "Anos",
+        "type": "array",
+        "editor": "stringList",
+        "description": "Anos a extrair"
+      },
+      "meshTypes": {
+        "title": "Tipos de malhas para extrair",
+        "type": "array",
+        "editor": "stringList",
+        "description": "Malhas para extrair"
+      }
+    },
+    "required": ["companies", "years", "meshTypes"]
+}
