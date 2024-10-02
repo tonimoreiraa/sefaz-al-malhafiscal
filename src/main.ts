@@ -1,5 +1,5 @@
 import { Actor, RequestQueue } from 'apify';
-import { PuppeteerCrawler, Request } from 'crawlee';
+import { PuppeteerCrawler } from 'crawlee';
 import { router } from './routes.js';
 
 await Actor.init();
@@ -27,7 +27,7 @@ for (const company of companies ?? []) {
 
 const crawler = new PuppeteerCrawler({
     maxConcurrency: 1,
-    headless: true,
+    headless: false,
     requestQueue,
     proxyConfiguration,
     requestHandler: router,

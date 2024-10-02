@@ -1,5 +1,7 @@
 import { createPuppeteerRouter } from 'crawlee';
 import path from 'path'
+import { Page } from 'puppeteer';
+import fs from 'fs/promises'
 
 export const router = createPuppeteerRouter();
 
@@ -56,8 +58,9 @@ router.addDefaultHandler(async ({ request, page, log, pushData }) => {
                 console.log(name, year, meshType)
                 await page.select('#tipo', meshType)
                 await page.select('#ano', year)
-                await page.waitForSelector('.black-overlay')
-                await page.waitForSelector('.black-overlay', { hidden: true })
+                await page.waitForSelector('.black-overlay').catch(_ => {})
+                await page.waitForSelector('.black-overlay', { hidden: true }).catch(_ => {})
+                await new Promise(r => setTimeout(r, 1000))
 
                 const button = await page.$('jhi-notas-omissas form button[type="submit"]')
                 if (!button)
@@ -77,9 +80,34 @@ router.addDefaultHandler(async ({ request, page, log, pushData }) => {
                     'Tabela': tableData,
                 })
 
-                // for (const documentIndex in tableData) {
-                //     const filePath = path.join(Actor.getEnv().defaultKeyValueStoreId, 'output.txt')
-                // }
+                const pathToFile = path.join('./storage/downloads', name, year, 'MFIC' + meshType)
+                await fs.mkdir(pathToFile, { recursive: true })
+                const screenshotPath = path.join(pathToFile, 'captura.png')
+                await page.screenshot({ path: screenshotPath, fullPage: true })
+
+                console.log(tableData)
+                for (const documentIndex in tableData) {
+                    const competencia = tableData[documentIndex].Competência.replace('/', '-')
+                    log.info(`Baixando MFIC ${meshType} (${year}) - ${competencia}`)
+                    await page.click(`jhi-notas-omissas table tbody tr:nth-child(${Number(documentIndex) + 1}) .btn.btn-pdf`)
+
+                    const newTarget = await page.browserContext().waitForTarget(
+                        target => target.url().startsWith('blob:')
+                    );
+                    const newPage = await newTarget.page() as Page;
+                    await new Promise(async (resolve) => {
+                        const blobUrl = newPage.url();
+                        page.once('response', async (response) => {
+                            const filePath = path.join(pathToFile, competencia + '.pdf')
+                            const pdfBuffer = await response.buffer()
+                            await fs.mkdir(pathToFile, { recursive: true }).catch()
+                            await fs.writeFile(filePath, pdfBuffer)
+                            resolve(undefined)
+                        });
+                        await page.evaluate((url) => { fetch(url); }, blobUrl);
+                    })
+                    await newPage.close()
+                }
             } catch (e) {
                 console.error(e)
             }
