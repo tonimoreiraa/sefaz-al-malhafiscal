@@ -13,6 +13,10 @@ router.addDefaultHandler(async ({ request, page, log, pushData }) => {
         years, meshTypes
     } = request.userData
 
+    page.on('dialog', async (dialog) => {
+        console.log('Alert detected:', dialog.message());
+        await dialog.dismiss(); // Dismiss the alert
+    })
     await page.goto('https://contribuinte.sefaz.al.gov.br/malhafiscal/#')
     const loginButton = await page.waitForSelector('a[jhitranslate="global.messages.info.authenticated.link"]')
     if (!loginButton) {
@@ -55,7 +59,6 @@ router.addDefaultHandler(async ({ request, page, log, pushData }) => {
     for (const year of years) {
         for (const meshType of meshTypes) {
             try {
-                console.log(name, year, meshType)
                 await page.select('#tipo', meshType)
                 await page.select('#ano', year)
                 await page.waitForSelector('.black-overlay').catch(_ => {})
@@ -63,8 +66,15 @@ router.addDefaultHandler(async ({ request, page, log, pushData }) => {
                 await new Promise(r => setTimeout(r, 1000))
 
                 const button = await page.$('jhi-notas-omissas form button[type="submit"]')
-                if (!button)
+
+                if (!button) {
+                    const pathToFile = path.join('./storage/downloads/Ok/', name, year, 'MFIC' + meshType)
+                    await fs.mkdir(pathToFile, { recursive: true })
+                    const screenshotPath = path.join(pathToFile, 'captura.png')
+                    await page.screenshot({ path: screenshotPath, fullPage: true })
+                    log.error(`${companyData.name}: ${year} - MFIC ${meshType} - Não há registros`)
                     continue
+                }
                 await button.click()
 
                 await page.waitForSelector('.black-overlay')
@@ -79,37 +89,46 @@ router.addDefaultHandler(async ({ request, page, log, pushData }) => {
                     'Tipo de malha': 'MFIC' + meshType,
                     'Tabela': tableData,
                 })
+                log.info(`${companyData.name}: ${year} - MFIC ${meshType} - ${tableData.length} registros`)
 
-                const pathToFile = path.join('./storage/downloads', name, year, 'MFIC' + meshType)
+                const pathToFile = path.join(`./storage/downloads${tableData.length == 0 ? '/Ok' : ''}`, name, year, 'MFIC' + meshType)
                 await fs.mkdir(pathToFile, { recursive: true })
                 const screenshotPath = path.join(pathToFile, 'captura.png')
                 await page.screenshot({ path: screenshotPath, fullPage: true })
 
-                console.log(tableData)
                 for (const documentIndex in tableData) {
-                    const competencia = tableData[documentIndex].Competência.replace('/', '-')
-                    log.info(`Baixando MFIC ${meshType} (${year}) - ${competencia}`)
-                    await page.click(`jhi-notas-omissas table tbody tr:nth-child(${Number(documentIndex) + 1}) .btn.btn-pdf`)
+                    try {
+                        const competencia = tableData[documentIndex].Competência.replace('/', '-')
+                        log.info(`Baixando MFIC ${meshType} (${year}) - ${competencia}`)
+                        await page.click(`jhi-notas-omissas table tbody tr:nth-child(${Number(documentIndex) + 1}) .btn.btn-pdf`)
 
-                    const newTarget = await page.browserContext().waitForTarget(
-                        target => target.url().startsWith('blob:')
-                    );
-                    const newPage = await newTarget.page() as Page;
-                    await new Promise(async (resolve) => {
-                        const blobUrl = newPage.url();
-                        page.once('response', async (response) => {
-                            const filePath = path.join(pathToFile, competencia + '.pdf')
-                            const pdfBuffer = await response.buffer()
-                            await fs.mkdir(pathToFile, { recursive: true }).catch()
-                            await fs.writeFile(filePath, pdfBuffer)
-                            resolve(undefined)
-                        });
-                        await page.evaluate((url) => { fetch(url); }, blobUrl);
-                    })
-                    await newPage.close()
+                        const newTarget = await page.browserContext().waitForTarget(
+                            target => target.url().startsWith('blob:')
+                        );
+                        const newPage = await newTarget.page() as Page;
+                        await new Promise(async (resolve) => {
+                            const blobUrl = newPage.url();
+                            page.once('response', async (response) => {
+                                const filePath = path.join(pathToFile, competencia + '.pdf')
+                                const pdfBuffer = await response.buffer()
+                                await fs.mkdir(pathToFile, { recursive: true }).catch()
+                                await fs.writeFile(filePath, pdfBuffer)
+                                resolve(undefined)
+                            });
+                            await page.evaluate((url) => { fetch(url); }, blobUrl);
+                        })
+                        await newPage.close()
+                    } catch (e) {
+                        console.error(e)
+                    }
                 }
             } catch (e) {
                 console.error(e)
+                await page.goto('https://contribuinte.sefaz.al.gov.br/malhafiscal/#/pendencias')
+                await page.waitForSelector('.black-overlay')
+                await page.waitForSelector('.black-overlay', { hidden: true })
+
+                await page.waitForSelector('#tipo')
             }
         }
     }
