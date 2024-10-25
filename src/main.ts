@@ -31,6 +31,7 @@ const crawler = new PuppeteerCrawler({
     requestQueue,
     proxyConfiguration,
     requestHandler: router,
+    requestHandlerTimeoutSecs: 43200,
 })
 
 await crawler.run();
