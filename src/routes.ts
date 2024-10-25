@@ -133,7 +133,6 @@ router.addDefaultHandler(async ({ request, page, log, pushData }) => {
                         }
                     } else if (tableData.length) {
                         const downloadButton = await page.waitForSelector('.text-center button.btn-primary')
-                        await new Promise(r => setTimeout(r, 600000))
                         if (downloadButton) {
                             await downloadButton.click()
                             const newTarget = await page.browserContext().waitForTarget(
