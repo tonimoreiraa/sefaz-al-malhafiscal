@@ -105,7 +105,7 @@ router.addDefaultHandler(async ({ request, page, log, pushData }) => {
                 await fs.mkdir(pathToFile, { recursive: true })
                 const screenshotPath = path.join(pathToFile, 'captura.png')
                 await page.screenshot({ path: screenshotPath, fullPage: true })
-                txt += `## ${year} - MFIC ${meshType}n${tableData.length == 0 ? 'Não há registros' : `${tableData.length} registros encontrados.`}\n\n`
+                txt += `## ${year} - MFIC ${meshType}\n${tableData.length == 0 ? 'Não há registros' : `${tableData.length} registros encontrados.`}\n\n`
 
                 try {
                     if (isNotasOmissas) {
