@@ -6,12 +6,18 @@ import { existsSync } from 'fs';
 
 export const router = createPuppeteerRouter();
 
+async function waitBlackOverlay(page: Page)
+{
+    await page.waitForSelector('.black-overlay').catch(_ => {})
+    await page.waitForSelector('.black-overlay', { hidden: true, timeout: 60000 }).catch(_ => {})
+}
+
 router.addDefaultHandler(async ({ request, page, log, pushData }) => {
     const {
         name,
         login,
         password,
-        years, meshTypes
+        meshTypes
     } = request.userData
 
     page.on('dialog', async (dialog) => {
@@ -57,121 +63,117 @@ router.addDefaultHandler(async ({ request, page, log, pushData }) => {
         name,
         data: []
     }
-    let txt = `# ${name}\n\n`
-    const maxRetries = 3;
+    let txt = `# ${name}`
 
-    for (const [year, meshType] of years.flatMap((year: string) => meshTypes.map((meshType: string) => [year, meshType]))) {
-        let success = false;
-        let attempts = 0;
+    for (const mesh of meshTypes) {
+        await page.select('#tipo', mesh)
 
-        while (!success && attempts < maxRetries) {
-            try {
-                console.log(`Baixando ${name} - ${year} - MFIC ${meshType}`)
-                if (existsSync(path.join('./storage/downloads/', name, 'MFIC' + meshType, year, 'captura.png'))) {
-                    success = true;
-                    continue;
-                }
-                const logPath = path.join('./storage/downloads/', name)
-                await fs.mkdir(logPath, { recursive: true })
-                await fs.writeFile(path.join(logPath, 'Relatório.txt'), txt)
-                await page.select('#tipo', meshType)
-                await page.select('#ano', year)
-                await page.waitForSelector('.black-overlay').catch(_ => {})
-                await page.waitForSelector('.black-overlay', { hidden: true }).catch(_ => {})
-                await new Promise(r => setTimeout(r, 1000))
+        await waitBlackOverlay(page)
+        
+        // Screenshot
+        const pathToFile = path.join(`./storage/downloads`, name, )
+        await fs.mkdir(pathToFile, { recursive: true })
+        const screenshotPath = path.join(pathToFile, 'MFIC' + mesh + '.png')
+        await page.screenshot({ path: screenshotPath, fullPage: true })
 
-                const button = await page.$('jhi-notas-omissas form button[type="submit"]')
+        await Promise.race([
+            page.waitForSelector('span[jhitranslate="malha-sem-inconsistencia"]'),
+            page.waitForSelector('.btn-group')
+        ])
+        const noInvoice = !!(await page.$('span[jhitranslate="malha-sem-inconsistencia"]'))
 
-                if (button) {
-                    await button.click()
-                    await page.waitForSelector('.black-overlay')
-                    await page.waitForSelector('.black-overlay', { hidden: true })
-                }
-
-                const tbody = await page.$$('jhi-main table tbody tr')
-                const thead = await page.$$eval('jhi-main table thead tr:nth-child(2) th', el => el.map(e => e.innerText))
-                const rows = await Promise.all(tbody.map(row => row.$$eval('th', e => e.map(i => i.innerText))))
-                const tableData = rows.map((row) => Object.fromEntries(row.map((value, index) => [thead[index], value])))
-                
-                companyData.data.push({
-                    'Ano': year,
-                    'Tipo de malha': 'MFIC' + meshType,
-                    'Tabela': tableData,
-                })
-                log.info(`${companyData.name}: ${year} - MFIC ${meshType} - ${tableData.length} registros`)
-
-                const isNotasOmissas = !!(await page.$('jhi-notas-omissas'))
-                const pathToFile = path.join(`./storage/downloads`, name, 'MFIC' + meshType, year)
-                await fs.mkdir(pathToFile, { recursive: true })
-                const screenshotPath = path.join(pathToFile, 'captura.png')
-                await page.screenshot({ path: screenshotPath, fullPage: true })
-                txt += `## ${year} - MFIC ${meshType}\n${tableData.length == 0 ? 'Não há registros' : `${tableData.length} registros encontrados.`}\n\n`
-
-                try {
-                    if (isNotasOmissas) {
-                        for (const documentIndex in tableData) {
-                            const competencia = tableData[documentIndex].Competência.replace('/', '-')
-                            log.info(`Baixando MFIC ${meshType} (${year}) - ${competencia}`)
-                            await page.click(`jhi-notas-omissas table tbody tr:nth-child(${Number(documentIndex) + 1}) .btn.btn-pdf`)
-
-                            const newTarget = await page.browserContext().waitForTarget(
-                                target => target.url().startsWith('blob:')
-                            );
-                            const newPage = await newTarget.page() as Page;
-                            await new Promise(async (resolve) => {
-                                const blobUrl = newPage.url();
-                                page.once('response', async (response) => {
-                                    const filePath = path.join(pathToFile, competencia + '.pdf')
-                                    const pdfBuffer = await response.buffer()
-                                    await fs.mkdir(pathToFile, { recursive: true }).catch()
-                                    await fs.writeFile(filePath, pdfBuffer)
-                                    resolve(undefined)
-                                });
-                                await page.evaluate((url) => { fetch(url); }, blobUrl);
-                            })
-                            await newPage.close()
-                        }
-                    } else if (tableData.length) {
-                        const downloadButton = await page.waitForSelector('.text-center button.btn-primary')
-                        if (downloadButton) {
-                            await downloadButton.click()
-                            const newTarget = await page.browserContext().waitForTarget(
-                                target => target.url().startsWith('blob:')
-                            );
-                            const newPage = await newTarget.page() as Page;
-                            await new Promise(async (resolve) => {
-                                const blobUrl = newPage.url();
-                                page.once('response', async (response) => {
-                                    const filePath = path.join(pathToFile, 'relatorio.pdf')
-                                    const pdfBuffer = await response.buffer()
-                                    await fs.mkdir(pathToFile, { recursive: true }).catch()
-                                    await fs.writeFile(filePath, pdfBuffer)
-                                    resolve(undefined)
-                                });
-                                await page.evaluate((url) => { fetch(url); }, blobUrl);
-                            })
-                            await newPage.close()
-                        }
-                    }
-                } catch (e) {
-                    console.error(e)
-                    console.log('Erro ao baixar documento')
-                }
-                success = true;
-            } catch (error) {
-                attempts++;
-                await page.goto('https://contribuinte.sefaz.al.gov.br/malhafiscal/#/pendencias')
-                await page.waitForSelector('.black-overlay')
-                await page.waitForSelector('.black-overlay', { hidden: true })
-                await page.waitForSelector('#tipo')
-                console.error(`Attempt ${attempts} failed for year ${year} and meshType ${meshType}:`, error);
-
-                if (attempts >= maxRetries) {
-                    console.error(`Max retries reached for year ${year} and meshType ${meshType}`);
-                }
-            }
+        if (noInvoice) {
+            txt += `\nMFIC${mesh} - Nenhuma inconsistência. ✅`
+            continue;    
         }
+
+        const years = await page.$$('.btn-group .btn.btn-link')
+        const yearsText = (await Promise.all(years.map(year => year.evaluate(el => el.textContent, year)))).map(r => r?.trim())
+
+        txt += `\nMFIC${mesh} - ❌ Inconsistência nos anos: ` + yearsText.join(', ')
+
+        let firstYear = true;
+        for (const year of years) {
+            const yearText = (await year.evaluate(el => el.textContent, year))?.trim() as string
+            await year.click()
+            const pathToFile = path.join(`./storage/downloads`, name, yearText, 'MFIC' + mesh)
+            await fs.mkdir(pathToFile, { recursive: true })
+
+            if (!firstYear) {
+                await waitBlackOverlay(page)
+            } else {
+                firstYear = false;
+            }
+
+            await fs.mkdir(pathToFile, { recursive: true })
+            const screenshotPath = path.join(pathToFile, `${yearText}.png`)
+            await page.screenshot({ path: screenshotPath, fullPage: true })
+
+            const isNotasOmissas = !!(await page.$('jhi-notas-omissas'))
+            const tbody = await page.$$('jhi-main table tbody tr')
+            const thead = await page.$$eval('jhi-main table thead tr:nth-child(2) th', el => el.map(e => e.innerText))
+            const rows = await Promise.all(tbody.map(row => row.$$eval('th', e => e.map(i => i.innerText))))
+            const tableData = rows.map((row) => Object.fromEntries(row.map((value, index) => [thead[index], value])))
+
+            try {
+                if (isNotasOmissas) {
+                    for (const documentIndex in tableData) {
+                        const competencia = tableData[documentIndex].Competência.replace('/', '-')
+                        log.info(`Baixando MFIC ${mesh} (${yearText}) - ${competencia}`)
+                        await page.click(`jhi-notas-omissas table tbody tr:nth-child(${Number(documentIndex) + 1}) .btn.btn-pdf`)
+
+                        const newTarget = await page.browserContext().waitForTarget(
+                            target => target.url().startsWith('blob:')
+                        );
+                        const newPage = await newTarget.page() as Page;
+                        await new Promise(async (resolve) => {
+                            const blobUrl = newPage.url();
+                            page.once('response', async (response) => {
+                                const filePath = path.join(pathToFile, competencia + '.pdf')
+                                const pdfBuffer = await response.buffer()
+                                await fs.mkdir(pathToFile, { recursive: true }).catch()
+                                await fs.writeFile(filePath, pdfBuffer)
+                                resolve(undefined)
+                            });
+                            await page.evaluate((url) => { fetch(url); }, blobUrl);
+                        })
+                        await newPage.close()
+                    }
+                } else if (tableData.length) {
+                    const downloadButton = await page.waitForSelector('.text-center button.btn-primary')
+                    if (downloadButton) {
+                        await downloadButton.click()
+                        const newTarget = await page.browserContext().waitForTarget(
+                            target => target.url().startsWith('blob:')
+                        );
+                        const newPage = await newTarget.page() as Page;
+                        await new Promise(async (resolve) => {
+                            const blobUrl = newPage.url();
+                            page.once('response', async (response) => {
+                                const filePath = path.join(pathToFile, 'relatorio.pdf')
+                                const pdfBuffer = await response.buffer()
+                                await fs.mkdir(pathToFile, { recursive: true }).catch()
+                                await fs.writeFile(filePath, pdfBuffer)
+                                resolve(undefined)
+                            });
+                            await page.evaluate((url) => { fetch(url); }, blobUrl);
+                        })
+                        await newPage.close()
+                    }
+                }
+            } catch (e) {
+                console.error(e)
+                txt += `\n  MFIC${mesh} ${yearText}: Falha ao baixar documento`
+            } finally {
+                txt += `\n  MFIC${mesh} ${yearText}: ${tableData.length} registros salvos`
+            }   
+        }
+        const logPath = path.join('./storage/downloads/', name)
+        await fs.mkdir(logPath, { recursive: true })
+        await fs.writeFile(path.join(logPath, 'Relatório.txt'), txt)
     }
+    txt += `\n\n###########################`
+    
 
     await pushData(companyData)
 });
